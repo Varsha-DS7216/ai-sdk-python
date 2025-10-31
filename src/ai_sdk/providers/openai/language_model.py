@@ -266,26 +266,89 @@ class OpenAIChatLanguageModel(LanguageModel):
         except httpx.RequestError as e:
             raise NetworkError(f"Network error calling OpenAI API: {e}") from e
     
+   # def _convert_response_to_result(self, response_data: Dict[str, Any]) -> GenerateResult:
+    #     """Convert OpenAI response to GenerateResult."""
+    #     choice = response_data["choices"][0]
+    #     message = choice["message"]
+        
+    #     # Extract content
+    #     content = []
+    #     if "content" in message and message["content"]:
+    #         content.append(TextContent(text=message["content"]))
+        
+    #     # Handle tool calls
+    #     if "tool_calls" in message and message["tool_calls"]:
+    #         # TODO: Implement tool call content parsing
+    #         pass
+        
+    #     # Extract usage
+    #     usage_data = response_data.get("usage", {})
+    #     completion_details = usage_data.get("completion_tokens_details", {})
+    #     prompt_details = usage_data.get("prompt_tokens_details", {})
+        
+    #     usage = Usage(
+    #         prompt_tokens=usage_data.get("prompt_tokens", 0),
+    #         completion_tokens=usage_data.get("completion_tokens", 0),
+    #         total_tokens=usage_data.get("total_tokens", 0),
+    #         reasoning_tokens=completion_details.get("reasoning_tokens"),
+    #         cached_input_tokens=prompt_details.get("cached_tokens"),
+    #     )
+        
+    #     # Extract finish reason
+    #     finish_reason_map = {
+    #         "stop": FinishReason.STOP,
+    #         "length": FinishReason.LENGTH,
+    #         "content_filter": FinishReason.CONTENT_FILTER,
+    #         "tool_calls": FinishReason.TOOL_CALLS,
+    #     }
+    #     finish_reason = finish_reason_map.get(
+    #         choice.get("finish_reason"),
+    #         FinishReason.UNKNOWN,
+    #     )
+        
+    #     return GenerateResult(
+    #         content=content,
+    #         finish_reason=finish_reason,
+    #         usage=usage,
+    #         provider_metadata=ProviderMetadata(data=response_data),
+    #     )
     def _convert_response_to_result(self, response_data: Dict[str, Any]) -> GenerateResult:
         """Convert OpenAI response to GenerateResult."""
         choice = response_data["choices"][0]
         message = choice["message"]
-        
         # Extract content
         content = []
         if "content" in message and message["content"]:
-            content.append(TextContent(text=message["content"]))
-        
-        # Handle tool calls
+            content.append({"type": "text", "text": message["content"]})
+
+        # ✅ Handle tool calls manually
+        import json
+
         if "tool_calls" in message and message["tool_calls"]:
-            # TODO: Implement tool call content parsing
-            pass
-        
+            for tool_call in message["tool_calls"]:
+                function = tool_call.get("function", {})
+                function_name = function.get("name")
+                arguments = function.get("arguments")
+                tool_call_id = tool_call.get("id")
+
+                if function_name and arguments:
+                    try:
+                        parsed_args = json.loads(arguments)
+                    except json.JSONDecodeError:
+                        parsed_args = {}
+
+                    content.append({
+                        "type": "tool-call",
+                        "tool_call_id": tool_call_id,
+                        "tool_name": function_name,
+                        "args": parsed_args ,
+                        "text": message["content"]# ✅ must be a dict
+                    })
         # Extract usage
         usage_data = response_data.get("usage", {})
         completion_details = usage_data.get("completion_tokens_details", {})
         prompt_details = usage_data.get("prompt_tokens_details", {})
-        
+
         usage = Usage(
             prompt_tokens=usage_data.get("prompt_tokens", 0),
             completion_tokens=usage_data.get("completion_tokens", 0),
@@ -293,7 +356,7 @@ class OpenAIChatLanguageModel(LanguageModel):
             reasoning_tokens=completion_details.get("reasoning_tokens"),
             cached_input_tokens=prompt_details.get("cached_tokens"),
         )
-        
+
         # Extract finish reason
         finish_reason_map = {
             "stop": FinishReason.STOP,
@@ -305,14 +368,13 @@ class OpenAIChatLanguageModel(LanguageModel):
             choice.get("finish_reason"),
             FinishReason.UNKNOWN,
         )
-        
+
         return GenerateResult(
             content=content,
             finish_reason=finish_reason,
             usage=usage,
             provider_metadata=ProviderMetadata(data=response_data),
         )
-    
     def _convert_chunk_to_stream_part(
         self,
         chunk_data: Dict[str, Any],
